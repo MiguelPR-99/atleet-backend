@@ -1,0 +1,222 @@
+// ============================================================
+// ATLEET — Prisma Schema Oficial
+// Basado en: "Biblia Técnica: Arquitectura de Datos Atleet"
+// Motor: PostgreSQL | ORM: Prisma
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ────────────────────────────────────────────────────
+
+/// Diferencia la fuente oficial del sistema de las customizaciones de la clínica
+enum DataSource {
+  USDA
+  CUSTOM
+}
+
+// ── Core Models ──────────────────────────────────────────────
+
+/// Unidad base de todos los alimentos.
+/// Representa registros USDA FDC y alimentos custom ingresados manualmente.
+model Ingredient {
+  id             String   @id @default(uuid())
+  fdcId          Int?     @unique // Requerido si DataSource es USDA
+  dataSource     DataSource @default(USDA)
+  name           String   // Ej: "Pollo, pechuga, carne cruda"
+  scientificName String?
+  brandOwner     String?  // Útil para suplementos locales/custom
+
+  // Relación directa con su perfil nutricional (valores referenciados a 100g)
+  nutrients      IngredientNutrient[]
+  mealSelections MealSelection[]
+
+  // Porciones oficiales o comunes (ej: "1 taza", "1 pieza")
+  portions   IngredientPortion[]
+
+  // Mapeo opcional al SMAE. Si es nulo, el alimento solo puede medirse en gramos/porciones
+  smaeMapping SmaeMapping?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("ingredients")
+}
+
+/// Catálogo universal de nutrientes.
+/// Almacena macros (Proteína, Lípidos, CHO) y micros (Vitamina C, Magnesio).
+/// Usa nomenclatura oficial FDC (ej., FDC Nutrient ID 1003 para Proteína).
+model Nutrient {
+  id            String  @id @default(uuid())
+  fdcNutrientId Int?    @unique // Ej: 1003 para Proteína, 1004 para Lípidos
+  name          String  // Ej: "Protein", "Total lipid (fat)"
+  unitName      String  // "g", "mg", "ug", "kcal", "IU"
+  isMacronutrient Boolean @default(false)
+
+  ingredients IngredientNutrient[]
+
+  @@map("nutrients")
+}
+
+/// Tabla pivote entre Ingredient y Nutrient.
+/// REGLA DE ORO: Siempre almacena el valor POR 100g de alimento (amountPer100g).
+/// Esto facilita las fórmulas estandarizadas de conversión del motor metabólico.
+model IngredientNutrient {
+  ingredientId  String
+  nutrientId    String
+  amountPer100g Float  // Valor exacto metabólico reportado por USDA FDC
+
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  nutrient   Nutrient   @relation(fields: [nutrientId], references: [id], onDelete: Cascade)
+
+  @@id([ingredientId, nutrientId])
+  @@map("ingredient_nutrients")
+}
+
+/// Medidas estandarizadas o de uso común.
+/// Mapeadas a su equivalente exacto en peso neto (gramos).
+model IngredientPortion {
+  id           String @id @default(uuid())
+  ingredientId String
+  description  String // Ej: "1 pieza mediana", "1 taza (picado)"
+  gramWeight   Float  // Peso equivalente en gramos para esta porción
+
+  ingredient     Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  mealSelections MealSelection[] // Selecciones que usan esta porción como unidad de cantidad
+
+  @@map("ingredient_portions")
+}
+
+// ── SMAE Native Structure ─────────────────────────────────────
+
+/// Catálogo cerrado de los 22 grupos del SMAE (4ta edición).
+/// Los promedios registrados son los valores TEÓRICOS del manual —
+/// solo se usan para estadísticas clínicas agregadas / UI.
+/// El cálculo preciso SIEMPRE usa los valores USDA del perfil del ingrediente.
+model SmaeCategory {
+  id        String @id @default(uuid())
+  name      String // Ej: "Alimentos de origen animal (Muy bajo aporte de grasa)"
+  shortCode String @unique // "AOA-MB"
+
+  // Promedios TEÓRICOS del manual SMAE (referencia para UI, NO para cálculo preciso)
+  avgCarbs    Float
+  avgProteins Float
+  avgFats     Float
+  avgKcal     Float
+
+  mappings       SmaeMapping[]
+  mealSelections MealSelection[]
+
+  @@map("smae_categories")
+}
+
+/// Elemento clave del ecosistema híbrido USDA + SMAE.
+/// Une un Ingredient con una SmaeCategory y especifica la conversión exacta:
+/// equivalentWeight = gramos de ESTE ingrediente que conforman 1 Equivalente SMAE.
+model SmaeMapping {
+  id           String @id @default(uuid())
+  ingredientId String @unique
+  categoryId   String
+
+  // LA CONVERSIÓN HÍBRIDA: Gramos exactos de ESTE ingrediente = 1 Equivalente SMAE
+  equivalentWeight Float
+  measure          String // Ej: "1/5 de pieza", "30 gramos", "1 taza"
+
+  ingredient Ingredient   @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  category   SmaeCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@map("smae_mappings")
+}
+
+// ── Plan Builder Models ───────────────────────────────────────────────────────
+
+/// Contenedor de un plan diario nutricional.
+/// Ejemplo: "Día 1 - Definición", "Plan de Corte - Semana 2".
+model NutritionPlan {
+  id          String  @id @default(uuid())
+  name        String  // Ej: "Día 1 - Definición"
+  description String?
+
+  // Metas opcionales de macros para comparar contra la suma calculada del día
+  targetKcal     Float?
+  targetProteins Float?
+  targetCarbs    Float?
+  targetFats     Float?
+
+  meals Meal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("nutrition_plans")
+}
+
+/// División lógica del día dentro de un NutritionPlan.
+/// Ejemplos: "Desayuno", "Colación Matutina", "Comida", "Cena".
+model Meal {
+  id              String @id @default(uuid())
+  nutritionPlanId String
+  name            String // Ej: "Desayuno"
+  order           Int    // Orden cronológico de la comida en el día (1, 2, 3...)
+  time            String? // Hora sugerida, formato HH:MM (Ej: "08:00")
+
+  plan       NutritionPlan   @relation(fields: [nutritionPlanId], references: [id], onDelete: Cascade)
+  selections MealSelection[]
+
+  @@map("meals")
+}
+
+/// Selección de un elemento dentro de una Meal.
+///
+/// ARQUITECTURA HÍBRIDA (Mutuamente excluyentes a nivel de dominio,
+/// ambos opcionales a nivel de SQL — validación delegada a Zod + entidad de Dominio):
+///
+///   Caso A — Exacto (ingredientId presente):
+///     Referencia un alimento específico USDA/CUSTOM/Verified.
+///     Cantidad: consumedGrams (gramos exactos) o portionId + portionQty (porciones).
+///
+///   Caso B — Teórico (smaeCategoryId presente):
+///     Referencia un grupo SMAE genérico. Ej: "1.5 equivalentes de Fruta".
+///     Cantidad: smaeEquivalents (OBLIGATORIO para este caso).
+model MealSelection {
+  id     String @id @default(uuid())
+  mealId String
+
+  // ── Referencia Híbrida (Caso A ó Caso B) ─────────────────────────────────
+  /// Caso A: Ingrediente exacto (USDA/CUSTOM/Verified)
+  ingredientId   String?
+  /// Caso B: Grupo SMAE teórico sin ingrediente específico
+  smaeCategoryId String?
+
+  // ── Cantidad (Caso A.1 — Gramos exactos) ─────────────────────────────────
+  /// Gramos exactos consumidos. Se usa con ingredientId en Modo Preciso.
+  consumedGrams Float?
+
+  // ── Cantidad (Caso A.2 — Porción definida) ────────────────────────────────
+  /// Referencia a una porción estandarizada del ingrediente (Ej: "1 taza", "1 pieza").
+  /// La conversión a gramos se resuelve con IngredientPortion.gramWeight × portionQty.
+  portionId  String? // FK a IngredientPortion
+  portionQty Float?  // Cantidad de porciones (Ej: 1.5 para "1.5 tazas")
+
+  // ── Cantidad (Caso A.2 / Caso B — Equivalentes SMAE) ─────────────────────
+  /// Equivalentes SMAE. Obligatorio para Caso B. Opcional para Caso A si el
+  /// ingrediente tiene mapeo SMAE (se recalculan desde los gramos resueltos).
+  smaeEquivalents Float?
+
+  // ── Metadatos ─────────────────────────────────────────────────────────────
+  /// Indicaciones de preparación opcionales (Ej: "Sin piel", "Al vapor").
+  notes String?
+
+  meal         Meal              @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient?       @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
+  smaeCategory SmaeCategory?     @relation(fields: [smaeCategoryId], references: [id], onDelete: SetNull)
+  portion      IngredientPortion? @relation(fields: [portionId], references: [id], onDelete: SetNull)
+
+  @@map("meal_selections")
+}

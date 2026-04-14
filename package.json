@@ -1,0 +1,55 @@
+{
+  "name": "atleet-backend",
+  "version": "1.0.0",
+  "description": "Motor nutricional API — Atleet (atleetnutricion.mx). SMAE + USDA FoodData Central.",
+  "main": "dist/interfaces/http/server.js",
+  "scripts": {
+    "dev": "tsx watch src/interfaces/http/server.ts",
+    "build": "tsc",
+    "start": "node dist/interfaces/http/server.js",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx prisma/seed/smae.seed.ts",
+    "db:seed:ingredients": "tsx prisma/seed/ingredients.seed.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset --force",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "atleet",
+    "nutrition",
+    "smae",
+    "usda",
+    "clean-architecture"
+  ],
+  "author": "Atleet (atleetnutricion.mx)",
+  "license": "MIT",
+  "prisma": {
+    "seed": "tsx prisma/seed/smae.seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.6.0",
+    "@prisma/client": "^7.6.0",
+    "express": "^5.2.1",
+    "pg": "^8.13.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.6.0",
+    "@types/pg": "^8.11.11",
+    "nodemon": "^3.1.9",
+    "pino": "^10.0.0",
+    "pino-pretty": "^13.0.0",
+    "prisma": "^7.6.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0"
+  }
+}
